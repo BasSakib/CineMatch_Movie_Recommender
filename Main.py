@@ -4,6 +4,7 @@ import pickle
 import pandas as pd
 import requests
 import html
+from huggingface_hub import hf_hub_download
 
 # PAGE CONFIGURATION
 
@@ -16,7 +17,14 @@ st.set_page_config(
 
 # TMDB API CONFIGURATION
 
-TMDB_API_KEY = st.secrets["TMDB_API_KEY"]
+try:
+    TMDB_API_KEY = st.secrets["TMDB_API_KEY"]
+except (KeyError, FileNotFoundError):
+    st.error(
+        "TMDB API key is missing. Add TMDB_API_KEY to "
+        "Streamlit Community Cloud → App settings → Secrets."
+    )
+    st.stop()
 
 TMDB_IMAGE_URL = "https://image.tmdb.org/t/p/w500/"
 
@@ -25,7 +33,6 @@ TMDB_IMAGE_URL = "https://image.tmdb.org/t/p/w500/"
 st.markdown("""
 <style>
 
-/* Keyframe for smooth fade-in and slide-up effect on load */
 @keyframes fadeInUp {
     from {
         opacity: 0;
@@ -37,7 +44,6 @@ st.markdown("""
     }
 }
 
-/* Keyframe for a subtle pulsing glow on the hero banner */
 @keyframes subtleGlow {
     0% {
         box-shadow: 0 12px 40px rgba(0,0,0,0.5);
@@ -50,21 +56,18 @@ st.markdown("""
     }
 }
 
-/* Apply fade-in animation to main container elements */
 .stApp {
     background: linear-gradient(135deg, #090e1b 0%, #111827 55%, #17152b 100%);
     color: #ffffff;
     animation: fadeInUp 0.8s ease-out;
 }
 
-/* Remove default top spacing */
 .block-container {
     padding-top: 2rem;
     padding-bottom: 3rem;
     max-width: 1450px;
 }
 
-/* Main hero section with dynamic pulsing shadow */
 .hero {
     padding: 45px 35px;
     border-radius: 22px;
@@ -87,7 +90,6 @@ st.markdown("""
     -webkit-text-fill-color: #FFD700 !important;
 }
 
-/* Section headings */
 .section-title {
     font-family: 'Poppins', sans-serif !important;
     font-size: 25px;
@@ -98,7 +100,6 @@ st.markdown("""
     letter-spacing: 0.3px;
 }
 
-/* Movie card */
 .movie-title {
     font-size: 15px;
     font-weight: 700;
@@ -119,7 +120,6 @@ st.markdown("""
     font-weight: 700;
 }
 
-/* Buttons with smooth hover movement */
 .stButton > button {
     background: linear-gradient(90deg, #1d4ed8, #0284c7);
     color: white;
@@ -138,7 +138,6 @@ st.markdown("""
     border: none;
 }
 
-/* Selectbox with smooth focus transition */
 div[data-baseweb="select"] > div {
     background-color: #20283a;
     border: 1px solid #444d63;
@@ -155,7 +154,6 @@ div[data-testid="stSelectbox"] label p {
     color: #ffffff !important;
 }
 
-/* Movie poster with dynamic zoom & glowing shadow */
 div[data-testid="stImage"] img {
     border-radius: 12px;
     transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.4s ease;
@@ -166,7 +164,6 @@ div[data-testid="stImage"]:hover img {
     box-shadow: 0 15px 30px rgba(2, 132, 199, 0.35);
 }
 
-/* Footer */
 .footer {
     text-align: center;
     color: #7e8799;
@@ -202,6 +199,59 @@ def fetch_movie_details(movie_id):
 
     except requests.exceptions.RequestException:
         return None
+
+
+# LOAD DATASET AND SIMILARITY MATRIX
+
+HF_REPO_ID = "Sakib12341234/CineMatch-models"
+HF_SIMILARITY_FILENAME = "similarity.pkl"
+
+
+@st.cache_resource(
+    show_spinner="Loading CineMatch model... This may take a few minutes on the first run."
+)
+def load_data():
+
+    # Load movie dataset from GitHub
+    with open("movie_list.pkl", "rb") as file:
+        movies_dict = pickle.load(file)
+
+    movie_data = pd.DataFrame(movies_dict)
+
+    # Download similarity matrix from Hugging Face
+    similarity_path = hf_hub_download(
+        repo_id=HF_REPO_ID,
+        filename=HF_SIMILARITY_FILENAME,
+        repo_type="model"
+    )
+
+    # Load downloaded similarity matrix
+    with open(similarity_path, "rb") as file:
+        similarity_data = pickle.load(file)
+
+    # Validate dataset and similarity matrix
+    if len(movie_data) != len(similarity_data):
+        raise ValueError(
+            "The movie dataset and similarity matrix do not match. "
+            "Please verify that both files were generated from "
+            "the same dataset and in the same order."
+        )
+
+    return movie_data, similarity_data
+
+
+# INITIALIZE DATA
+
+try:
+    movies, similarity = load_data()
+
+except Exception as error:
+    st.error(
+        "CineMatch could not load its movie data or similarity model."
+    )
+    st.exception(error)
+    st.stop()
+
 
 # RECOMMENDATION FUNCTION
 
@@ -243,22 +293,6 @@ def recommend(movie):
 
     return recommended_movies
 
-# LOAD DATASET AND SIMILARITY MATRIX
-
-@st.cache_resource
-def load_data():
-
-    with open("movie_list.pkl", "rb") as file:
-        movies_dict = pickle.load(file)
-
-    movie_data = pd.DataFrame(movies_dict)
-
-    with open("similarity.pkl", "rb") as file:
-        similarity_data = pickle.load(file)
-
-    return movie_data, similarity_data
-
-movies, similarity = load_data()
 
 # HERO SECTION
 
@@ -279,6 +313,7 @@ Explore personalized recommendations powered by machine learning.
 </div>
 """, unsafe_allow_html=True)
 
+
 # MOVIE SELECTION
 
 st.markdown(
@@ -292,6 +327,7 @@ selected_movie_name = st.selectbox(
     index=None,
     placeholder="Search or select a movie..."
 )
+
 
 # RECOMMENDATION BUTTON
 
@@ -310,6 +346,7 @@ if st.button("🎥 Discover Similar Movies", use_container_width=True):
     else:
 
         st.warning("Please select a movie first!")
+
 
 # DISPLAY RECOMMENDATIONS
 
@@ -351,7 +388,8 @@ if "recommendations" in st.session_state:
 
                 genres = movie.get("genres", [])
 
-                # Poster
+                # POSTER
+
                 if poster_path:
 
                     poster_url = TMDB_IMAGE_URL + poster_path
@@ -379,13 +417,15 @@ if "recommendations" in st.session_state:
                         unsafe_allow_html=True
                     )
 
-                # Movie title
+                # MOVIE TITLE
+
                 st.markdown(
                     f'<div class="movie-title">{html.escape(title)}</div>',
                     unsafe_allow_html=True
                 )
 
-                # Release year
+                # RELEASE YEAR
+
                 year = release_date[:4] if release_date else "N/A"
 
                 st.markdown(
@@ -393,7 +433,8 @@ if "recommendations" in st.session_state:
                     unsafe_allow_html=True
                 )
 
-                # Rating
+                # RATING
+
                 if rating:
 
                     st.markdown(
@@ -405,7 +446,8 @@ if "recommendations" in st.session_state:
 
                     st.caption("Rating unavailable")
 
-                # Movie details
+                # MOVIE DETAILS
+
                 with st.expander("More details"):
 
                     if overview:
@@ -424,6 +466,7 @@ if "recommendations" in st.session_state:
     else:
 
         st.info("No recommendations found. Try another movie!")
+
 
 # FOOTER
 
